@@ -662,7 +662,7 @@ function getUpdateBadge(teamId) {
 
 function flagUrl(team) { return 'https://flagcdn.com/w80/' + (team.flag || team.id.slice(0,2).toLowerCase()) + '.png'; }
 
-function getTeam(id) { return TEAMS[id] || {id:id,name:id,fifa:1500,att:65,def:60,hosts:[]}; }
+function getTeam(id) { if (id===0||id===undefined||id===null||id==='') return null; return TEAMS[id] || null; }
 function findTeamByName(enName) { return TEAM_BY_NAME[enName] || null; }
 
 /* HOME ADVANTAGE - only host teams in their own country */
@@ -959,9 +959,9 @@ function renderMatchList() {
     html += '<div class="'+cardClass+'" onclick="selectGame('+g.id+')">'
       + '<div class="match-time"><span class="dot"></span>'+bjTime+' · '+STATE.selectedDate+' · '+stageLabel(g)+' '+statusHtml+'</div>'
       + '<div class="match-teams">'
-      + '<div class="match-team"><img src="'+flagUrl(tH)+'" onerror="this.style.display=\'none\'">'+tH.name+'</div>'
+      + '<div class="match-team"><img src="'+(tH?flagUrl(tH):'')+'" onerror="this.style.display=\'none\'">'+(tH?tH.name:'待定')+'</div>'
       + '<div class="match-vs">VS</div>'
-      + '<div class="match-team away">'+tA.name+'<img src="'+flagUrl(tA)+'" onerror="this.style.display=\'none\'"></div>'
+      + '<div class="match-team away">'+(tA?tA.name:'待定')+'<img src="'+(tA?flagUrl(tA):'')+'" onerror="this.style.display=\'none\'"></div>'
       + '</div>'+scoreHtml
       + '<div class="match-venue">📍 '+venue+'</div>'
       + '</div>';
@@ -980,6 +980,17 @@ function selectGame(gameId) {
   if (!game) return;
   var tH = findTeamByName(game.home_team_name_en) || getTeam(game.home_team_id);
   var tA = findTeamByName(game.away_team_name_en) || getTeam(game.away_team_id);
+  // 待定对阵（半决赛/决赛的胜者尚未产生）：优雅提示，不调用 predict
+  if (!tH || !tA) {
+    var pendPanel = document.getElementById('resultPanel');
+    pendPanel.innerHTML = '<div class="actual-result"><div class="ar-header">⏳ '+stageLabel(game)+'</div>'
+      + '<div class="ar-score">待定 : 待定</div>'
+      + '<div class="ar-prediction-compare">对阵尚未揭晓（由上轮胜者晋级产生）。本页每 5 分钟自动刷新，赛果产生后将自动更新预测与战力校准。</div></div>';
+    pendPanel.classList.add('show');
+    document.getElementById('shareBtnBottom').classList.add('show');
+    renderMatchList();
+    return;
+  }
   var vc = getVenueCountry(game.stadium_id);
   var result = predict(tH, tA, vc);
   var isFin = game.time_elapsed==='finished'||game.finished==='TRUE';
