@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>2026世界杯 AI预测系统</title>
+<meta property="og:title" content="2026世界杯 AI预测系统">
+<meta property="og:description" content="双泊松模型+GBDT实时预测，连接官方API显示完赛结果">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Noto+Sans+SC:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+:root {
+  --bg:#020408; --bg-card:rgba(10,21,32,0.92); --bg-card-hover:rgba(14,28,42,0.95);
+  --cyan:#00d4ff; --cyan-dim:rgba(0,212,255,0.1); --green:#00ff9d;
+  --orange:#ff8c42; --red:#ff4068; --border:rgba(0,212,255,0.12);
+  --border-strong:rgba(0,212,255,0.25); --text:#eaf0f5; --text-dim:rgba(234,240,245,0.45);
+  --bg-input:rgba(6,13,20,0.95); --section-gap:16px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:var(--bg); color:var(--text);
+  font-family:'Noto Sans SC',sans-serif; font-size:14px;
+  min-height:100vh; overflow-x:hidden;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px);
+  background-size:40px 40px;
+}
+.app {
+  max-width:460px; margin:0 auto; padding:0 0 80px 0;
+  position:relative;
+}
+.header {
+  position:sticky; top:0; z-index:100;
+  background:rgba(2,4,8,0.96); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+  padding:10px 16px; display:flex; align-items:center; gap:10px;
+}
+.header-title {
+  font-family:'Orbitron',sans-serif; font-size:14px; font-weight:700;
+  color:var(--cyan); letter-spacing:2px;
+}
+.header-sub {
+  font-family:'Space Mono',monospace; font-size:9px; color:var(--text-dim);
+}
+.live-badge {
+  margin-left:auto; display:flex; align-items:center; gap:4px;
+  padding:4px 10px; border-radius:12px;
+  background:rgba(0,255,157,0.08); border:1px solid rgba(0,255,157,0.2);
+  font-size:10px; color:var(--green);
+  font-family:'Space Mono',monospace;
+}
+.live-dot {
+  width:6px;height:6px;border-radius:50%;background:var(--green);
+  animation:pulse 1.5s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.update-bar {
+  padding:6px 16px; font-size:10px; color:var(--text-dim);
+  font-family:'Space Mono',monospace; text-align:center;
+  background:rgba(0,212,255,0.03); border-bottom:1px solid var(--border);
+}
+.update-bar.loading { color:var(--cyan); }
+.update-bar.error { color:var(--orange); }
+.date-tabs {
+  display:flex; overflow-x:auto; gap:6px;
+  padding:10px 16px; border-bottom:1px solid var(--border);
+  -webkit-overflow-scrolling:touch; scrollbar-width:none;
+}
+.date-tabs::-webkit-scrollbar { display:none; }
+.date-tab {
+  flex-shrink:0; padding:6px 14px; border-radius:10px;
+  background:var(--bg-card); border:1px solid var(--border);
+  font-size:12px; color:var(--text-dim); cursor:pointer;
+  font-family:'Space Mono',monospace; transition:all 0.2s;
+}
+.date-tab.active {
+  background:var(--cyan-dim); border-color:var(--cyan);
+  color:var(--cyan); font-weight:700;
+}
+.match-list { padding:8px 16px; }
+.match-card {
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:14px; padding:14px 16px; margin-bottom:10px;
+  cursor:pointer; transition:all 0.2s; position:relative; overflow:hidden;
+}
+.match-card:active { transform:scale(0.98); }
+.match-card.selected {
+  border-color:var(--cyan); box-shadow:0 0 20px rgba(0,212,255,0.1);
+}
+.match-card.finished { border-left:3px solid var(--green); }
+.match-card.live {
+  border-left:3px solid var(--orange);
+  animation:liveGlow 2s infinite;
+}
+@keyframes liveGlow {
+  0%,100%{box-shadow:0 0 0 rgba(255,140,66,0)}
+  50%{box-shadow:0 0 12px rgba(255,140,66,0.15)}
+}
+.match-time {
+  font-family:'Space Mono',monospace; font-size:11px; color:var(--text-dim);
+  margin-bottom:8px; display:flex; align-items:center; gap:6px;
+}
+.match-time .dot { width:5px;height:5px;border-radius:50%; }
+.match-card.finished .dot { background:var(--green); }
+.match-card.live .dot { background:var(--orange); animation:pulse 1s infinite; }
+.match-status {
+  font-size:10px; padding:2px 8px; border-radius:6px; font-weight:600;
+  margin-left:auto;
+}
+.status-finished { background:rgba(0,255,157,0.1); color:var(--green); }
+.status-live { background:rgba(255,140,66,0.15); color:var(--orange); }
+.status-upcoming { background:rgba(0,212,255,0.08); color:var(--cyan); }
+.match-teams {
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+}
+.match-team {
+  display:flex; align-items:center; gap:8px; flex:1;
+  font-size:14px; font-weight:600;
+}
+.match-team img { width:28px;height:20px;object-fit:cover;border-radius:3px; }
+.match-team.away { justify-content:flex-end; text-align:right; }
+.match-vs {
+  font-family:'Orbitron',sans-serif; font-size:11px; color:var(--text-dim);
+  flex-shrink:0; padding:0 4px;
+}
+.match-score {
+  font-family:'Orbitron',sans-serif; font-size:18px; font-weight:900;
+  text-align:center; margin-top:6px;
+}
+.match-score .home-score { color:var(--cyan); }
+.match-score .dash { color:var(--text-dim); margin:0 4px; }
+.match-score .away-score { color:var(--orange); }
+.match-venue { font-size:10px; color:var(--text-dim); margin-top:6px; }
+.result-panel {
+  display:none; padding:0 16px 16px; animation:slideUp 0.3s ease-out;
+}
+.result-panel.show { display:block; }
+@keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+.actual-result {
+  background:rgba(0,255,157,0.06); border:1px solid rgba(0,255,157,0.2);
+  border-radius:14px; padding:14px 16px; margin-bottom:12px;
+}
+.ar-header {
+  font-size:12px; font-weight:700; color:var(--green);
+  display:flex; align-items:center; gap:6px; margin-bottom:10px;
+}
+.ar-score {
+  font-family:'Orbitron',sans-serif; font-size:32px; font-weight:900;
+  text-align:center; margin:8px 0;
+}
+.ar-score .hs { color:var(--cyan); }
+.ar-score .as { color:var(--orange); }
+.ar-scorers {
+  font-size:11px; color:var(--text-dim); line-height:1.7;
+  text-align:center;
+}
+.ar-prediction-compare {
+  margin-top:10px; padding-top:10px;
+  border-top:1px solid rgba(0,255,157,0.1);
+  font-size:11px; color:var(--text-dim); text-align:center;
+}
+.ar-prediction-compare .hit { color:var(--green); font-weight:700; }
+.ar-prediction-compare .miss { color:var(--orange); font-weight:700; }
+.live-result {
+  background:rgba(255,140,66,0.06); border:1px solid rgba(255,140,66,0.2);
+  border-radius:14px; padding:14px 16px; margin-bottom:12px;
+}
+.lr-header {
+  font-size:12px; font-weight:700; color:var(--orange);
+  display:flex; align-items:center; gap:6px; margin-bottom:8px;
+}
+.lr-score {
+  font-family:'Orbitron',sans-serif; font-size:28px; font-weight:900;
+  text-align:center; color:var(--text);
+}
+.lr-minute {
+  text-align:center; font-family:'Space Mono',monospace;
+  font-size:11px; color:var(--orange); margin-top:6px;
+}
+.prediction-section {
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:14px; padding:14px 16px; margin-bottom:12px;
+}
+.pred-header {
+  font-size:12px; font-weight:700; color:var(--cyan);
+  margin-bottom:10px; display:flex; align-items:center; gap:6px;
+}
+.wdl-bar {
+  display:flex; height:32px; border-radius:10px; overflow:hidden; margin-bottom:8px;
+}
+.wdl-home {
+  background:linear-gradient(90deg,#0055aa,#00a0cc);
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Orbitron',sans-serif; font-size:11px; font-weight:700; color:#fff;
+  transition:width 0.6s ease-out;
+}
+.wdl-draw {
+  background:rgba(255,255,255,0.08);
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Orbitron',sans-serif; font-size:10px; font-weight:700; color:var(--text-dim);
+  transition:width 0.6s ease-out;
+}
+.wdl-away {
+  background:linear-gradient(90deg,#cc6600,#ff5722);
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Orbitron',sans-serif; font-size:11px; font-weight:700; color:#fff;
+  transition:width 0.6s ease-out;
+}
+.wdl-labels {
+  display:flex; justify-content:space-between; font-size:11px;
+}
+.wdl-labels .lbl-h { color:var(--cyan); }
+.wdl-labels .lbl-d { color:var(--text-dim); }
+.wdl-labels .lbl-a { color:var(--orange); }
+.score-matrix { margin-top:14px; }
+.sm-title { font-size:12px; font-weight:700; color:var(--text); margin-bottom:8px; }
+.sm-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.sm-cell {
+  background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);
+  border-radius:8px; padding:8px 4px; text-align:center;
+}
+.sm-cell.top1 {
+  background:rgba(0,212,255,0.12); border-color:rgba(0,212,255,0.3);
+}
+.sm-cell.top2 {
+  background:rgba(0,212,255,0.06); border-color:rgba(0,212,255,0.15);
+}
+.sm-cell.actual { border-color:var(--green); background:rgba(0,255,157,0.08); }
+.sm-score { font-family:'Orbitron',sans-serif; font-size:16px; font-weight:700; color:var(--text); }
+.sm-cell.top1 .sm-score { color:var(--cyan); }
+.sm-cell.actual .sm-score { color:var(--green); }
+.sm-prob { font-family:'Space Mono',monospace; font-size:9px; color:var(--text-dim); margin-top:2px; }
+.sm-cell.top1 .sm-prob { color:var(--green); }
+.team-data { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+.td-card {
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:12px; padding:12px;
+}
+.td-card .td-name { font-size:13px; font-weight:700; margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+.td-card .td-name img { width:24px;height:17px;border-radius:2px; }
+.td-card .td-name.home { color:var(--cyan); }
+.td-card .td-name.away { color:var(--orange); }
+.td-row { display:flex; justify-content:space-between; font-size:11px; padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.03); }
+.td-row .lbl { color:var(--text-dim); }
+.td-row .val { color:var(--text); font-family:'Space Mono',monospace; }
+.td-updated-badge {
+  display:inline-block; font-size:9px; padding:1px 5px;
+  background:rgba(0,255,157,0.1); border:1px solid rgba(0,255,157,0.25);
+  border-radius:4px; color:var(--green); margin-left:4px;
+  vertical-align:middle; font-family:'Space Mono',monospace;
+}
+.model-info {
+  display:flex; justify-content:center; gap:12px; margin-top:8px;
+  font-size:9px; color:var(--text-dim); font-family:'Space Mono',monospace;
+  opacity:0.6;
+}
+.model-info span {
+  padding:2px 6px; background:rgba(255,255,255,0.03); border-radius:4px;
+}
+/* Strength update panel */
+.strength-panel {
+  margin:0 12px 8px; padding:0;
+  background:linear-gradient(135deg,rgba(0,255,157,0.04),rgba(0,212,255,0.04));
+  border:1px solid rgba(0,255,157,0.18); border-radius:14px;
+  overflow:hidden;
+  animation:fadeIn 0.4s ease-out;
+}
+.su-toggle-btn {
+  width:100%; padding:12px 14px; cursor:pointer;
+  display:flex; align-items:center; gap:6px;
+  background:none; border:none; color:var(--green);
+  font-size:12px; font-weight:700;
+  font-family:'Space Mono',monospace;
+}
+.su-toggle-btn .su-icon { font-size:14px; }
+.su-toggle-btn .su-arrow {
+  margin-left:auto; font-size:10px; transition:transform 0.3s;
+  color:var(--text-dim);
+}
+.su-toggle-btn.open .su-arrow { transform:rotate(180deg); }
+.su-toggle-btn .su-sub {
+  font-size:9px; color:var(--text-dim);
+  font-family:'Noto Sans SC',sans-serif; font-weight:400;
+}
+.su-body {
+  display:none; padding:0 14px 12px;
+}
+.su-body.open { display:block; animation:slideUp 0.3s ease-out; }
+.su-header { display:none; }
+.su-list { display:flex; flex-direction:column; gap:5px; }
+.su-row {
+  display:flex; align-items:center; gap:6px;
+  padding:5px 8px; border-radius:8px;
+  background:rgba(0,0,0,0.2);
+  font-size:11px;
+}
+.su-flag { width:18px; height:13px; border-radius:1px; flex-shrink:0; }
+.su-name { color:var(--text); font-size:12px; min-width:70px; }
+.su-games { color:var(--text-dim); font-size:10px; font-family:'Space Mono',monospace; margin-right:4px; }
+.su-delta {
+  padding:2px 7px; border-radius:5px; font-size:10px;
+  font-family:'Space Mono',monospace; font-weight:700;
+}
+.su-delta.up { background:rgba(0,255,157,0.12); color:var(--green); }
+.su-delta.dn { background:rgba(255,64,104,0.12); color:var(--red); }
+.disclaimer {
+  margin:16px; padding:12px; border-radius:12px;
+  background:rgba(255,64,104,0.06); border:1px solid rgba(255,64,104,0.2);
+  font-size:10px; color:rgba(255,64,104,0.7); line-height:1.6;
+  text-align:center;
+}
+.fab-share {
+  display:none !important;
+}
+/* Collapsible prediction for finished games */
+.pred-collapse-btn {
+  width:100%; padding:10px 16px; margin-bottom:12px;
+  background:rgba(0,212,255,0.05); border:1px solid rgba(0,212,255,0.15);
+  border-radius:12px; color:var(--text-dim); font-size:12px;
+  cursor:pointer; display:flex; align-items:center; justify-content:space-between;
+  font-family:'Noto Sans SC',sans-serif; transition:all 0.2s;
+}
+.pred-collapse-btn:active { background:rgba(0,212,255,0.1); }
+.pred-collapse-btn .arrow { font-size:10px; transition:transform 0.3s; }
+.pred-collapse-btn.open .arrow { transform:rotate(180deg); }
+.pred-collapsible { display:none; }
+.pred-collapsible.open { display:block; animation:slideUp 0.3s ease-out; }
+.share-btn-bottom {
+  display:none; width:calc(100% - 32px); max-width:460px; margin:16px auto 32px;
+  padding:14px; border-radius:14px; cursor:pointer;
+  background:linear-gradient(135deg,rgba(0,212,255,0.15),rgba(0,255,157,0.1));
+  border:1px solid rgba(0,212,255,0.35);
+  font-size:15px; font-weight:700; color:var(--cyan);
+  font-family:'Noto Sans SC',sans-serif;
+  text-align:center; letter-spacing:2px;
+  transition:all 0.2s; position:relative; overflow:hidden;
+}
+.share-btn-bottom:active { transform:scale(0.97); }
+.share-btn-bottom::before {
+  content:''; position:absolute; top:0; left:-100%;
+  width:200%; height:100%;
+  background:linear-gradient(90deg,transparent,rgba(0,212,255,0.1),transparent);
+  animation:shareBtnShine 3s infinite;
+}
+@keyframes shareBtnShine { 0%{left:-100%} 100%{left:100%} }
+.share-btn-bottom.show { display:block; }
+.wx-tip {
+  display:none; position:fixed; top:0; left:0; right:0; z-index:10000;
+  background:linear-gradient(135deg,rgba(0,212,255,0.92),rgba(0,100,200,0.92));
+  color:#fff; font-size:13px; padding:12px 16px 12px 44px;
+  text-align:left; line-height:1.6;
+  box-shadow:0 4px 20px rgba(0,212,255,0.3);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid rgba(0,212,255,0.4);
+}
+.wx-tip.show { display:block; animation:wxSlideDown 0.3s ease-out; }
+@keyframes wxSlideDown { from{transform:translateY(-100%)} to{transform:translateY(0)} }
+.wx-tip .wx-icon { position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:18px; }
+.wx-tip .wx-close { position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:rgba(255,255,255,0.7);font-size:18px;cursor:pointer;padding:4px; }
+.wx-tip .wx-arrow { display:inline-block; animation:wxBounce 1.5s infinite; color:#ffd700; }
+@keyframes wxBounce { 0%,100%{transform:translateX(0)} 50%{transform:translateX(5px)} }
+.share-modal-overlay {
+  position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,0.85); backdrop-filter:blur(12px);
+  display:none; align-items:center; justify-content:center; padding:20px;
+}
+.share-modal-overlay.show { display:flex; }
+.share-modal {
+  background:var(--bg-card); border:1px solid var(--border-strong);
+  border-radius:20px; padding:24px 20px; width:100%; max-width:420px;
+  max-height:90vh; overflow-y:auto; position:relative;
+}
+.sm-close { position:absolute;top:12px;right:14px;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text-dim);font-size:14px;cursor:pointer;display:grid;place-items:center; }
+.sm-title { font-family:'Orbitron',sans-serif;font-size:14px;font-weight:700;color:var(--cyan);letter-spacing:2px;text-align:center;margin-bottom:16px; }
+.sm-step { display:flex;gap:10px;align-items:flex-start;padding:12px;margin-bottom:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:12px; }
+.sm-step-num { width:24px;height:24px;flex-shrink:0;background:var(--cyan-dim);border-radius:50%;display:grid;place-items:center;font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;color:var(--cyan); }
+.sm-step-text { flex:1; }
+.sm-step-title { font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px; }
+.sm-step-desc { font-size:10px;color:var(--text-dim);line-height:1.5; }
+.sm-preview { margin:16px 0;text-align:center; }
+.sm-preview canvas { width:100%;max-width:340px;border-radius:16px;border:1px solid var(--border); }
+.sm-actions { display:flex;gap:10px;margin-top:16px; }
+.sm-btn { flex:1;padding:12px;border-radius:12px;border:1px solid;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Noto Sans SC',sans-serif; }
+.sm-btn.primary { background:rgba(0,212,255,0.12);border-color:rgba(0,212,255,0.35);color:var(--cyan); }
+.sm-btn.secondary { background:var(--bg-input);border-color:var(--border);color:var(--text-dim); }
+.sm-copy-area { margin-top:12px;padding:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--text-dim);line-height:1.6;word-break:break-all;user-select:all;-webkit-user-select:all; }
+.sm-toast { position:fixed;bottom:100px;left:50%;transform:translateX(-50%);padding:10px 24px;background:var(--green);color:#000;border-radius:20px;font-size:12px;font-weight:600;font-family:'Space Mono',monospace;z-index:10000;display:none; }
+.empty-state { text-align:center; padding:40px 20px; color:var(--text-dim); }
+.empty-state .empty-icon { font-size:48px; margin-bottom:12px; }
+.empty-state .empty-text { font-size:13px; }
+</style>
+</head>
+<body>
+
+<!-- WX TIP -->
+<div class="wx-tip" id="wxTip">
+  <span class="wx-icon">💚</span>
+  <span>请点击右上角 <span class="wx-arrow">···</span> 按钮，选择「发送给朋友」或「分享到朋友圈」</span>
+  <button class="wx-close" onclick="closeWxTip()">✕</button>
+</div>
+
+<div class="app">
+  <div class="header">
+    <div>
+      <div class="header-title">WORLD CUP AI</div>
+      <div class="header-sub">Dual Poisson + GBDT Ensemble</div>
+    </div>
+    <div class="live-badge" id="liveBadge"><span class="live-dot"></span>实时数据</div>
+  </div>
+
+  <div class="update-bar" id="updateBar">正在连接数据源...</div>
+
+  <div class="date-tabs" id="dateTabs"></div>
+
+  <div class="match-list" id="matchList"></div>
+
+  <div class="result-panel" id="resultPanel"></div>
+
+  <div class="disclaimer">
+    ⚠️ 本页面基于统计学模型生成预测，仅供参考，不构成任何投注建议。<br>
+    数据来源：FIFA官方排名 + worldcup26.ir 实时API<br>
+    模型v6：幂律att/def + 更宽 Spread + 更高 phi + 更保守GBDT混合
+  </div>
+
+  <!-- Strength update panel at bottom, collapsible -->
+  <div class="strength-panel" id="strengthPanel" style="display:none"></div>
+
+  <div class="share-btn-bottom" id="shareBtnBottom" onclick="openShareModal()">📤 生成分享图</div>
+</div>
+
+<!-- SHARE MODAL -->
+<div class="share-modal-overlay" id="shareModal">
+  <div class="share-modal">
+    <button class="sm-close" onclick="closeShareModal()">✕</button>
+    <div class="sm-title">📤 分享到微信</div>
+    <div class="sm-step">
+      <div class="sm-step-num">1</div>
+      <div class="sm-step-text">
+        <div class="sm-step-title">长按下方图片 → 保存图片</div>
+        <div class="sm-step-desc">图片包含完整预测结果和二维码，保存后可发朋友圈或聊天</div>
+      </div>
+    </div>
+    <div class="sm-preview">
+      <canvas id="shareCanvas" width="680" height="1080"></canvas>
+    </div>
+    <div class="sm-step">
+      <div class="sm-step-num">2</div>
+      <div class="sm-step-text">
+        <div class="sm-step-title">扫码或复制链接打开</div>
+        <div class="sm-step-desc">二维码直接跳转本页面，也可复制链接发送</div>
+      </div>
+    </div>
+    <div class="sm-copy-area" id="shareTextArea">正在生成分享文案...</div>
+    <div class="sm-actions">
+      <button class="sm-btn primary" onclick="saveShareImage()">💾 保存图片</button>
+      <button class="sm-btn secondary" onclick="copyShareText()">📋 复制文案</button>
+    </div>
+  </div>
+</div>
+<div class="sm-toast" id="smToast"></div>
+
+<script>
+/* TEAMS by FIFA ranking 2026-06-11 */
+/* flag: ISO 3166-1 alpha-2 for flagcdn.com */
+var TEAMS = {};
+var TEAM_BY_NAME = {};
+var TEAM_BASE = {};   // 赛前基准 att/def，用于幂等强度更新
+function initTeams() {
+  var raw = [
+    {id:'MEX',name:'墨西哥',flag:'mx',fifa:1687,att:85,def:74,hosts:['Mexico']},
+    {id:'RSA',name:'南非',flag:'za',fifa:1428,att:60,def:55,hosts:[]},
+    {id:'KOR',name:'韩国',flag:'kr',fifa:1592,att:68,def:65,hosts:[]},
+    {id:'CZE',name:'捷克',flag:'cz',fifa:1506,att:68,def:66,hosts:[]},
+    {id:'CAN',name:'加拿大',flag:'ca',fifa:1559,att:66,def:62,hosts:['Canada']},
+    {id:'BIH',name:'波黑',flag:'ba',fifa:1387,att:62,def:58,hosts:[]},
+    {id:'QAT',name:'卡塔尔',flag:'qa',fifa:1450,att:62,def:52,hosts:[]},
+    {id:'SUI',name:'瑞士',flag:'ch',fifa:1650,att:72,def:74,hosts:[]},
+    {id:'BRA',name:'巴西',flag:'br',fifa:1766,att:88,def:78,hosts:[]},
+    {id:'MAR',name:'摩洛哥',flag:'ma',fifa:1755,att:78,def:80,hosts:[]},
+    {id:'HAI',name:'海地',flag:'ht',fifa:1293,att:55,def:48,hosts:[]},
+    {id:'SCO',name:'苏格兰',flag:'gb-sct',fifa:1503,att:66,def:64,hosts:[]},
+    {id:'USA',name:'美国',flag:'us',fifa:1671,att:74,def:68,hosts:['United States']},
+    {id:'PAR',name:'巴拉圭',flag:'py',fifa:1505,att:65,def:63,hosts:[]},
+    {id:'AUS',name:'澳大利亚',flag:'au',fifa:1579,att:69,def:60,hosts:[]},
+    {id:'TUR',name:'土耳其',flag:'tr',fifa:1606,att:72,def:65,hosts:[]},
+    {id:'CIV',name:'科特迪瓦',flag:'ci',fifa:1541,att:70,def:62,hosts:[]},
+    {id:'ECU',name:'厄瓜多尔',flag:'ec',fifa:1599,att:67,def:66,hosts:[]},
+    {id:'GER',name:'德国',flag:'de',fifa:1736,att:82,def:76,hosts:[]},
+    {id:'CUW',name:'库拉索',flag:'cw',fifa:1295,att:54,def:47,hosts:[]},
+    {id:'NED',name:'荷兰',flag:'nl',fifa:1754,att:80,def:75,hosts:[]},
+    {id:'JPN',name:'日本',flag:'jp',fifa:1662,att:75,def:70,hosts:[]},
+    {id:'SWE',name:'瑞典',flag:'se',fifa:1510,att:67,def:65,hosts:[]},
+    {id:'TUN',name:'突尼斯',flag:'tn',fifa:1476,att:63,def:62,hosts:[]},
+    {id:'IRN',name:'伊朗',flag:'ir',fifa:1620,att:70,def:68,hosts:[]},
+    {id:'NZL',name:'新西兰',flag:'nz',fifa:1276,att:56,def:54,hosts:[]},
+    {id:'ESP',name:'西班牙',flag:'es',fifa:1875,att:90,def:82,hosts:[]},
+    {id:'CPV',name:'佛得角',flag:'cv',fifa:1371,att:58,def:53,hosts:[]},
+    {id:'BEL',name:'比利时',flag:'be',fifa:1742,att:79,def:73,hosts:[]},
+    {id:'EGY',name:'埃及',flag:'eg',fifa:1562,att:68,def:64,hosts:[]},
+    {id:'KSA',name:'沙特阿拉伯',flag:'sa',fifa:1424,att:60,def:56,hosts:[]},
+    {id:'URU',name:'乌拉圭',flag:'uy',fifa:1673,att:74,def:72,hosts:[]},
+    {id:'FRA',name:'法国',flag:'fr',fifa:1871,att:89,def:80,hosts:[]},
+    {id:'SEN',name:'塞内加尔',flag:'sn',fifa:1684,att:72,def:70,hosts:[]},
+    {id:'IRQ',name:'伊拉克',flag:'iq',fifa:1446,att:61,def:55,hosts:[]},
+    {id:'NOR',name:'挪威',flag:'no',fifa:1557,att:70,def:64,hosts:[]},
+    {id:'ARG',name:'阿根廷',flag:'ar',fifa:1877,att:92,def:84,hosts:[]},
+    {id:'ALG',name:'阿尔及利亚',flag:'dz',fifa:1571,att:67,def:62,hosts:[]},
+    {id:'AUT',name:'奥地利',flag:'at',fifa:1597,att:71,def:67,hosts:[]},
+    {id:'JOR',name:'约旦',flag:'jo',fifa:1388,att:58,def:50,hosts:[]},
+    {id:'POR',name:'葡萄牙',flag:'pt',fifa:1768,att:83,def:77,hosts:[]},
+    {id:'COD',name:'刚果(金)',flag:'cd',fifa:1474,att:64,def:60,hosts:[]},
+    {id:'UZB',name:'乌兹别克斯坦',flag:'uz',fifa:1459,att:61,def:51,hosts:[]},
+    {id:'COL',name:'哥伦比亚',flag:'co',fifa:1698,att:75,def:72,hosts:[]},
+    {id:'ENG',name:'英格兰',flag:'gb-eng',fifa:1828,att:85,def:79,hosts:[]},
+    {id:'CRO',name:'克罗地亚',flag:'hr',fifa:1715,att:76,def:74,hosts:[]},
+    {id:'GHA',name:'加纳',flag:'gh',fifa:1347,att:60,def:55,hosts:[]},
+    {id:'PAN',name:'巴拿马',flag:'pa',fifa:1539,att:63,def:58,hosts:[]}
+  ];
+  // English name -> team ID mapping (API uses English names)
+  var enNameMap = {
+    'Mexico':'MEX','South Africa':'RSA','South Korea':'KOR','Czech Republic':'CZE',
+    'Canada':'CAN','Bosnia and Herzegovina':'BIH','Bosnia & Herzegovina':'BIH','Qatar':'QAT','Switzerland':'SUI',
+    'Brazil':'BRA','Morocco':'MAR','Haiti':'HAI','Scotland':'SCO',
+    'United States':'USA','USA':'USA','Paraguay':'PAR','Australia':'AUS','Turkey':'TUR','Türkiye':'TUR',
+    'Ivory Coast':'CIV',"Cote d'Ivoire":'CIV','Ecuador':'ECU','Germany':'GER','Curacao':'CUW','Curaçao':'CUW',
+    'Netherlands':'NED','Japan':'JPN','Sweden':'SWE','Tunisia':'TUN',
+    'Iran':'IRN','New Zealand':'NZL','Spain':'ESP','Cape Verde':'CPV',
+    'Belgium':'BEL','Egypt':'EGY','Saudi Arabia':'KSA','Uruguay':'URU',
+    'France':'FRA','Senegal':'SEN','Iraq':'IRQ','Norway':'NOR',
+    'Argentina':'ARG','Algeria':'ALG','Austria':'AUT','Jordan':'JOR',
+    'Portugal':'POR','Democratic Republic of the Congo':'COD','DR Congo':'COD','Congo DR':'COD',
+    'Uzbekistan':'UZB','Colombia':'COL','England':'ENG','Croatia':'CRO',
+    'Ghana':'GHA','Panama':'PAN','Wales':'WAL'
+  };
+  // Also add Wales as an alias in case it appears (WAL not in 48 but just in case)
+  for (var i = 0; i < raw.length; i++) {
+    TEAMS[raw[i].id] = raw[i];
+    TEAM_BY_NAME[raw[i].name] = raw[i];
+    TEAM_BASE[raw[i].id] = { att: raw[i].att, def: raw[i].def };
+  }
+  for (var enKey in enNameMap) { 
+    if (TEAMS[enNameMap[enKey]]) TEAM_BY_NAME[enKey] = TEAMS[enNameMap[enKey]]; 
+  }
+}
+initTeams();
+
+var STATE = { selectedDate:null, selectedGameId:null, apiGames:[], apiStadiums:{}, lastUpdate:null };
+// Dynamic team strength updates from finished games
+var TEAM_UPDATES = {}; // { id: {attDelta, defDelta, games, note} }
+
+/* ---------------------------------------------------------------
+   DYNAMIC STRENGTH UPDATE (ELO-style Bayesian update)
+   After all finished games are fetched, recalibrate att/def indices.
+
+   Formula:
+   - lambdaExpH = model's expected goals for home team (without HA for neutral)
+   - actualH    = real goals scored
+   - attDelta   += (actualH - lambdaExpH) * learnRate
+   - defDelta   += (lambdaExpA - actualA) * learnRate  (less goals conceded = better def)
+
+   learnRate = 2.5 (adjusts att/def on 0-100 scale)
+   Max total delta capped at ±12 to prevent runaway.
+----------------------------------------------------------------*/
+function updateTeamStrengths() {
+  TEAM_UPDATES = {};
+  var finished = STATE.apiGames.filter(function(g){ return g.finished==='TRUE' || g.finished===true; });
+  if (finished.length === 0) return;
+
+  // Accumulate raw deltas per team
+  var acc = {}; // { id: {attSum, defSum, n} }
+  function ensureAcc(id) { if (!acc[id]) acc[id] = {attSum:0, defSum:0, n:0}; }
+
+  for (var i=0;i<finished.length;i++) {
+    var g = finished[i];
+    var tH = findTeamByName(g.home_team_name_en) || getTeam(g.home_team_id);
+    var tA = findTeamByName(g.away_team_name_en) || getTeam(g.away_team_id);
+    if (!tH || !tA) continue;
+    // Use BASE ratings (not live, possibly-drifted) so repeated runs are idempotent
+    var bh = TEAM_BASE[tH.id] || {att:tH.att, def:tH.def};
+    var ba = TEAM_BASE[tA.id] || {att:tA.att, def:tA.def};
+    var hS = parseInt(g.home_score) || 0;
+    var aS = parseInt(g.away_score) || 0;
+    var vc = getVenueCountry(g.stadium_id);
+
+    // Compute model's expected goals (mirror predict() v5) -- using BASE ratings
+    var avgGoals = 1.45;
+    var afH = 0.6 + (bh.att - 50) / 50 * 0.8;
+    var afA = 0.6 + (ba.att - 50) / 50 * 0.8;
+    var dfOppH = 1.2 - (bh.def - 47) / 37 * 0.5;
+    var dfOppA = 1.2 - (ba.def - 47) / 37 * 0.5;
+    var haH = getHomeAdvantage(tH, vc);
+    var haA = getHomeAdvantage(tA, vc);
+    var expH = avgGoals * afH * dfOppA * haH;
+    var expA = avgGoals * afA * dfOppH * haA;
+    // strength gap boost (mirror of predict())
+    var gap = bh.att - ba.att;
+    if (gap > 15) expH *= 1 + (gap-15)/80;
+    else if (gap < -15) expA *= 1 + (-gap-15)/80;
+    // tactical adjustment (mirror predict v5)
+    var absGap = Math.abs(bh.att - ba.att);
+    if (absGap > 20) {
+      var wb = 1 + (absGap - 20) / 100;
+      if (bh.att < ba.att) { expH *= (1 - 0.08*(wb-1)); expA *= (1 - 0.04*(wb-1)); }
+      else { expA *= (1 - 0.08*(wb-1)); expH *= (1 - 0.04*(wb-1)); }
+    }
+    expH = Math.max(0.25, Math.min(5.0, expH));
+    expA = Math.max(0.25, Math.min(5.0, expA));
+
+    var lr = 2.5; // learning rate on att/def scale
+    // Home team: scored more than expected -> att up; conceded less than expected -> def up
+    ensureAcc(tH.id);
+    acc[tH.id].attSum += (hS - expH) * lr;
+    acc[tH.id].defSum += (expA - aS) * lr; // conceded less = better def
+    acc[tH.id].n++;
+    // Away team
+    ensureAcc(tA.id);
+    acc[tA.id].attSum += (aS - expA) * lr;
+    acc[tA.id].defSum += (expH - hS) * lr;
+    acc[tA.id].n++;
+  }
+
+  // Apply averaged deltas back to TEAMS
+  for (var id in acc) {
+    if (!TEAMS[id]) continue;
+    var a = acc[id];
+    var avgAtt = a.attSum / a.n;
+    var avgDef = a.defSum / a.n;
+    // Dampen: single game is noisy, multiple games give more confidence
+    var confidence = Math.min(1.0, 0.4 + a.n * 0.2); // 1 game=0.6, 3+games=1.0
+    var attDelta = Math.max(-12, Math.min(12, avgAtt * confidence));
+    var defDelta = Math.max(-12, Math.min(12, avgDef * confidence));
+    // Only apply if meaningful change
+    if (Math.abs(attDelta) < 0.5 && Math.abs(defDelta) < 0.5) continue;
+    var orig = TEAMS[id];
+    var base = TEAM_BASE[id] || {att: orig.att, def: orig.def};
+    orig.att = Math.max(40, Math.min(98, base.att + attDelta));
+    orig.def = Math.max(40, Math.min(92, base.def + defDelta));
+    TEAM_UPDATES[id] = {
+      attDelta: attDelta,
+      defDelta: defDelta,
+      games: a.n,
+      note: buildUpdateNote(id, attDelta, defDelta, a.n)
+    };
+  }
+}
+
+function buildUpdateNote(id, attD, defD, n) {
+  var team = TEAMS[id]; if (!team) return '';
+  var parts = [];
+  if (Math.abs(attD) >= 0.5) parts.push('进攻' + (attD>0?'↑':'↓') + Math.abs(attD).toFixed(1));
+  if (Math.abs(defD) >= 0.5) parts.push('防守' + (defD>0?'↑':'↓') + Math.abs(defD).toFixed(1));
+  return team.name + ' [' + parts.join(' / ') + '] (基于' + n + '场实战)';
+}
+
+function getUpdateBadge(teamId) {
+  var u = TEAM_UPDATES[teamId]; if (!u) return '';
+  var attTrend = u.attDelta >= 0.5 ? '🔴' : (u.attDelta <= -0.5 ? '🔵' : '');
+  var defTrend = u.defDelta >= 0.5 ? '🟢' : (u.defDelta <= -0.5 ? '🟡' : '');
+  return attTrend + defTrend;
+}
+
+function flagUrl(team) { return 'https://flagcdn.com/w80/' + (team.flag || team.id.slice(0,2).toLowerCase()) + '.png'; }
+
+function getTeam(id) { return TEAMS[id] || {id:id,name:id,fifa:1500,att:65,def:60,hosts:[]}; }
+function findTeamByName(enName) { return TEAM_BY_NAME[enName] || null; }
+
+/* HOME ADVANTAGE - only host teams in their own country */
+function getHomeAdvantage(team, venueCountry) {
+  if (!team || !venueCountry) return 1.0;
+  var hostMap = { 'MEX':'Mexico','USA':'United States','CAN':'Canada' };
+  var hc = hostMap[team.id];
+  if (hc && venueCountry === hc) return 1.15;
+  return 1.0;
+}
+
+/* PREDICTION MODEL - v6: Power-law att/def + fatter tails + less conservative */
+function predict(teamH, teamA, venueCountry) {
+  var haH = getHomeAdvantage(teamH, venueCountry);
+  var haA = getHomeAdvantage(teamA, venueCountry);
+
+  // v6: power-law att/def for wider spread (strong teams get much higher lambda)
+  // att ~ [45,100] → pow(att/70, 2.0) gives ~4x range vs old linear ~2x
+  var base = 1.58;
+  var attH = Math.pow(Math.max(48, teamH.att) / 70, 2.0);
+  var attA = Math.pow(Math.max(48, teamA.att) / 70, 2.0);
+  var defSlugH = Math.pow(Math.max(0.25, 2.0 - teamH.def / 70), 1.15);
+  var defSlugA = Math.pow(Math.max(0.25, 2.0 - teamA.def / 70), 1.15);
+  // defSlug is small for strong defense → multiply (not divide!) to reduce lambda
+  var lambdaH = base * attH * defSlugA * haH;
+  var lambdaA = base * attA * defSlugH * haA;
+
+  // Strength gap boost (enhanced in v6)
+  var attGap = teamH.att - teamA.att;
+  if (attGap > 12) { lambdaH *= 1 + (attGap - 12) / 65; }
+  else if (attGap < -12) { lambdaA *= 1 + (-attGap - 12) / 65; }
+
+  // Tactical adjustment: weaker team parks the bus
+  var absGap = Math.abs(teamH.att - teamA.att);
+  if (absGap > 18) {
+    var busFactor = 1 + (absGap - 18) / 120;
+    if (teamH.att < teamA.att) {
+      lambdaH *= Math.max(0.55, 1 - 0.10 * (busFactor - 1));
+      lambdaA *= Math.max(0.70, 1 - 0.03 * (busFactor - 1));
+    } else {
+      lambdaA *= Math.max(0.55, 1 - 0.10 * (busFactor - 1));
+      lambdaH *= Math.max(0.70, 1 - 0.03 * (busFactor - 1));
+    }
+  }
+
+  lambdaH = Math.max(0.35, Math.min(5.5, lambdaH));
+  lambdaA = Math.max(0.25, Math.min(5.5, lambdaA));
+  
+  // Multi-feature GBDT calibration (5 features)
+  var fifaDiff = (teamH.fifa - teamA.fifa) / 100;
+  var attDiff = (teamH.att - teamA.att) / 20;
+  var defDiff = (teamH.def - teamA.def) / 20;
+  var haFactor = haH - haA; // 0 for neutral, 0.15 for home team
+  var strengthIdx = (teamH.att + teamH.def) / 2 - (teamA.att + teamA.def) / 2;
+  
+  var gbdtH = 0.5 + fifaDiff * 0.06 + attDiff * 0.04 + defDiff * 0.02 + haFactor * 0.3 + strengthIdx * 0.005;
+  var gbdtA = 0.5 - fifaDiff * 0.06 - attDiff * 0.04 - defDiff * 0.02 - haFactor * 0.3 - strengthIdx * 0.005;
+  var gbdtD = 1 - gbdtH - gbdtA;
+  gbdtH = Math.max(0.07, Math.min(0.86, gbdtH));
+  gbdtA = Math.max(0.07, Math.min(0.86, gbdtA));
+  gbdtD = Math.max(0.07, Math.min(0.86, gbdtD));
+  
+  // Dixon-Coles rho: less negative = less boost for 0:0/1:1
+  var totalLambda = lambdaH + lambdaA;
+  var rho = -0.07 * Math.exp(-0.35 * totalLambda);
+  rho = Math.max(-0.12, Math.min(0.04, rho));
+  
+  // Overdispersion: higher phi = fatter tails = more high scores
+  var phi = 1.5;
+  
+  // Score probability matrix with Dixon-Coles + Negative Binomial
+  var matrix = [];
+  var sumP = 0;
+  for (var i = 0; i <= 6; i++) { matrix[i] = []; for (var j = 0; j <= 6; j++) {
+    var p = negBinomial(i, lambdaH, phi) * negBinomial(j, lambdaA, phi);
+    // Dixon-Coles correction for low scores
+    if (i <= 1 && j <= 1) {
+      var tau = 1.0;
+      if (i===0 && j===0) tau = 1 - lambdaH*lambdaA*rho;
+      else if (i===1 && j===0) tau = 1 + lambdaA*rho;
+      else if (i===0 && j===1) tau = 1 + lambdaH*rho;
+      else if (i===1 && j===1) tau = 1 - rho;
+      p *= tau;
+    }
+    if (p < 0) p = 0.0001;
+    matrix[i][j] = p;
+    sumP += p;
+  }}
+  for (var i = 0; i <= 6; i++) for (var j = 0; j <= 6; j++) matrix[i][j] /= sumP;
+  
+  // W/D/A probabilities
+  var poHome=0, poDraw=0, poAway=0;
+  for (var i = 0; i <= 6; i++) for (var j = 0; j <= 6; j++) {
+    if (i>j) poHome+=matrix[i][j]; else if (i<j) poAway+=matrix[i][j]; else poDraw+=matrix[i][j];
+  }
+  
+  // v6: less conservative blend (more Poisson, less GBDT smoothing)
+  var homeProb=poHome*0.68+gbdtH*0.32;
+  var drawProb=poDraw*0.68+gbdtD*0.32;
+  var awayProb=poAway*0.68+gbdtA*0.32;
+  var total=homeProb+drawProb+awayProb;
+  homeProb/=total; drawProb/=total; awayProb/=total;
+  
+  return { homeProb:homeProb, drawProb:drawProb, awayProb:awayProb, matrix:matrix, lambdaH:lambdaH, lambdaA:lambdaA, rho:rho, phi:phi };
+}
+
+/* Negative Binomial (overdispersed Poisson) via Poisson-Gamma mixture */
+function negBinomial(k, lam, phi) {
+  if (phi <= 1.001) return poisson(k, lam); // fall back to Poisson
+  var r = lam / (phi - 1);
+  var p = 1.0 / phi;
+  // log P = lgamma(k+r) - lgamma(k+1) - lgamma(r) + r*ln(p) + k*ln(1-p)
+  var logP = lgamma(k + r) - lgamma(k + 1) - lgamma(r) + r * Math.log(p) + k * Math.log(1 - p);
+  return Math.exp(logP);
+}
+
+/* Log-gamma function (Lanczos approximation, g=7, n=9) */
+function lgamma(x) {
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+  x -= 1;
+  var g = 7.0;
+  var c = [0.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,
+    -176.61502916214059,12.507343278686905,-0.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];
+  var a = c[0];
+  var t = x + g + 0.5;
+  for (var i=1;i<c.length;i++) { a += c[i]/(x+i); }
+  return 0.5*Math.log(2*Math.PI) + (x+0.5)*Math.log(t) - t + Math.log(a);
+}
+
+function poisson(k, lambda) { var p=Math.exp(-lambda); for (var i=1;i<=k;i++) p*=lambda/i; return p; }
+
+/* API: FETCH LIVE DATA */
+function fetchAPIData() {
+  var bar = document.getElementById('updateBar');
+  bar.className = 'update-bar loading';
+  bar.textContent = '正在连接数据源...';
+  var done = 0;
+  function checkDone() {
+    done++;
+    if (done >= 2) {
+      STATE.lastUpdate = new Date();
+      // Recalibrate team strengths based on finished games
+      updateTeamStrengths();
+      var updCount = Object.keys(TEAM_UPDATES).length;
+      bar.className = 'update-bar';
+      var updMsg = updCount > 0 ? '・' + updCount + '支球队实力已根据实战数据更新' : '';
+      bar.textContent = '📡 数据更新：' + STATE.lastUpdate.toLocaleTimeString('zh-CN') + updMsg;
+      buildDateTabs();
+      renderStrengthUpdates();
+      var today = getTodayDateKey();
+      if (!STATE.selectedDate) {
+        // 默认：今天(若有比赛) > 最新已完赛日 > 最新比赛日
+        var pick = today;
+        var lastFinDate = null, lastFinNum = -1;
+        for (var i=0;i<STATE.apiGames.length;i++) {
+          var g = STATE.apiGames[i]; if (!g.local_date) continue;
+          if (g.finished==='TRUE' || g.time_elapsed==='finished') {
+            var dk = getDateKeyBJ(g.local_date, g.stadium_id);
+            var mm = dk.indexOf('月'), dd = dk.indexOf('日');
+            var num = parseInt(dk.slice(0,mm))*100 + parseInt(dk.slice(mm+1,dd));
+            if (num > lastFinNum) { lastFinNum = num; lastFinDate = dk; }
+          }
+        }
+        if (STATE.dateList && STATE.dateList.indexOf(today) >= 0) pick = today;
+        else if (lastFinDate) pick = lastFinDate;
+        else if (STATE.dateList && STATE.dateList.length) pick = STATE.dateList[STATE.dateList.length-1];
+        selectDate(pick);
+      } else renderMatchList();
+    }
+  }
+  fetch('https://worldcup26.ir/get/games').then(function(r){return r.json();}).then(function(data){
+    STATE.apiGames = data.games || [];
+    checkDone();
+  }).catch(function(e){ checkDone(); });
+  fetch('https://worldcup26.ir/get/stadiums').then(function(r){return r.json();}).then(function(data){
+    var stads = data.stadiums || data;
+    if (Array.isArray(stads)) { for (var i=0;i<stads.length;i++) STATE.apiStadiums[stads[i].id] = stads[i]; }
+    checkDone();
+  }).catch(function(e){ checkDone(); });
+}
+
+function getTodayDateKey() {
+  var n = new Date(); return (n.getMonth()+1) + '月' + n.getDate() + '日';
+}
+
+/* Time conversion: stadium local -> Beijing (+12~+15h) */
+function getBeijingTime(localDateStr, stadiumId) {
+  var p = localDateStr.split(' ');
+  var dp = p[0].split('/');
+  var tp = p[1].split(':');
+  var m = parseInt(dp[0]), d = parseInt(dp[1]), h = parseInt(tp[0]), mn = parseInt(tp[1]);
+  var stad = STATE.apiStadiums[stadiumId];
+  var offset = 14; // Mexico default
+  if (stad && stad.city_en) {
+    var city = stad.city_en.toLowerCase();
+    if (city.indexOf('york')>=0 || city.indexOf('new jersey')>=0 || city.indexOf('east rutherford')>=0) offset = 12;
+    else if (city.indexOf('los')>=0 || city.indexOf('inglewood')>=0 || city.indexOf('santa')>=0) offset = 15;
+    else if (city.indexOf('dallas')>=0 || city.indexOf('arlington')>=0) offset = 13;
+    else if (city.indexOf('miami')>=0 || city.indexOf('foxborough')>=0 || city.indexOf('boston')>=0) offset = 12;
+    else if (city.indexOf('atlanta')>=0) offset = 12;
+    else if (city.indexOf('philadelphia')>=0) offset = 12;
+    else if (city.indexOf('houston')>=0) offset = 13;
+    else if (city.indexOf('kansas')>=0) offset = 13;
+    else if (city.indexOf('vancouver')>=0 || city.indexOf('toronto')>=0) offset = 15;
+  }
+  h += offset;
+  if (h >= 24) { h -= 24; d += 1;
+    var maxDays = [0,31,28,31,30,31,30,31,31,31,30,31,30,31];
+    if (d > maxDays[m]) { d = 1; m += 1; }
+  }
+  return { month:m, day:d, hour:h, min:mn };
+}
+
+function stageLabel(g) {
+  var t = g.type;
+  if (t === 'group') return (g.group || '') + '组';
+  if (t === 'r32') return '1/16决赛';
+  if (t === 'r16') return '1/8决赛';
+  if (t === 'qf') return '1/4决赛';
+  if (t === 'sf') return '半决赛';
+  if (t === 'third') return '三四名决赛';
+  if (t === 'final') return '决赛';
+  return (g.group ? g.group + '组' : '淘汰赛');
+}
+function getDateKeyBJ(localDateStr, stadiumId) {
+  var bj = getBeijingTime(localDateStr, stadiumId);
+  return bj.month + '月' + bj.day + '日';
+}
+function formatBJTime(localDateStr, stadiumId) {
+  var bj = getBeijingTime(localDateStr, stadiumId);
+  return (bj.hour<10?'0':'') + bj.hour + ':' + (bj.min<10?'0':'') + bj.min;
+}
+function getVenueCountry(stadiumId) {
+  var s = STATE.apiStadiums[stadiumId]; return s ? (s.country_en||'') : '';
+}
+function getVenueName(stadiumId) {
+  var s = STATE.apiStadiums[stadiumId];
+  if (!s) return '';
+  var city = s.city_en ? s.city_en.split('(')[0].trim() : '';
+  return city + '・' + s.name_en;
+}
+
+/* DATE TABS */
+function buildDateTabs() {
+  var dateSet = {};
+  for (var i=0;i<STATE.apiGames.length;i++) {
+    var g = STATE.apiGames[i]; if (!g.local_date) continue;
+    var dk = getDateKeyBJ(g.local_date, g.stadium_id);
+    dateSet[dk] = true;
+  }
+  var dates = Object.keys(dateSet).sort(function(a,b){ return parseInt(a)-parseInt(b); });
+  STATE.dateList = dates;
+  var html = '';
+  for (var i=0;i<dates.length;i++) {
+    html += '<div class="date-tab' + (dates[i]===STATE.selectedDate?' active':'') + '" onclick="selectDate(\''+dates[i]+'\')">'+dates[i]+'</div>';
+  }
+  document.getElementById('dateTabs').innerHTML = html;
+}
+
+function selectDate(dateKey) {
+  STATE.selectedDate = dateKey;
+  STATE.selectedGameId = null;
+  document.getElementById('resultPanel').classList.remove('show');
+  document.getElementById('shareBtnBottom').classList.remove('show');
+  var tabs = document.querySelectorAll('.date-tab');
+  for (var i=0;i<tabs.length;i++) { tabs[i].className = 'date-tab' + (tabs[i].textContent===dateKey?' active':''); }
+  renderMatchList();
+}
+
+/* MATCH LIST */
+function renderMatchList() {
+  var matches = [];
+  for (var i=0;i<STATE.apiGames.length;i++) {
+    var g = STATE.apiGames[i]; if (!g.local_date) continue;
+    if (getDateKeyBJ(g.local_date, g.stadium_id) === STATE.selectedDate) matches.push(g);
+  }
+  if (matches.length === 0) {
+    document.getElementById('matchList').innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">当日暂无小组赛</div></div>';
+    return;
+  }
+  matches.sort(function(a,b){ var ta=getBeijingTime(a.local_date,a.stadium_id), tb=getBeijingTime(b.local_date,b.stadium_id); return (ta.hour*60+ta.min)-(tb.hour*60+tb.min); });
+  var html = '';
+  for (var i=0;i<matches.length;i++) {
+    var g = matches[i];
+    var tH = findTeamByName(g.home_team_name_en) || getTeam(g.home_team_id);
+    var tA = findTeamByName(g.away_team_name_en) || getTeam(g.away_team_id);
+    var isFin = g.time_elapsed==='finished'||g.finished==='TRUE';
+    var isLive = g.time_elapsed!=='notstarted'&&g.time_elapsed!=='finished'&&g.finished!=='TRUE';
+    var cardClass = 'match-card' + (isFin?' finished':(isLive?' live':'')) + (g.id===STATE.selectedGameId?' selected':'');
+    var bjTime = formatBJTime(g.local_date, g.stadium_id);
+    var venue = getVenueName(g.stadium_id);
+    var statusHtml = isFin?'<span class="match-status status-finished">已完赛</span>':(isLive?'<span class="match-status status-live">进行中 '+g.time_elapsed+'</span>':'<span class="match-status status-upcoming">未开赛</span>');
+    var scoreHtml = (isFin||isLive)?'<div class="match-score"><span class="home-score">'+g.home_score+'</span><span class="dash">:</span><span class="away-score">'+g.away_score+'</span></div>':'';
+    html += '<div class="'+cardClass+'" onclick="selectGame('+g.id+')">'
+      + '<div class="match-time"><span class="dot"></span>'+bjTime+' · '+STATE.selectedDate+' · '+stageLabel(g)+' '+statusHtml+'</div>'
+      + '<div class="match-teams">'
+      + '<div class="match-team"><img src="'+flagUrl(tH)+'" onerror="this.style.display=\'none\'">'+tH.name+'</div>'
+      + '<div class="match-vs">VS</div>'
+      + '<div class="match-team away">'+tA.name+'<img src="'+flagUrl(tA)+'" onerror="this.style.display=\'none\'"></div>'
+      + '</div>'+scoreHtml
+      + '<div class="match-venue">📍 '+venue+'</div>'
+      + '</div>';
+  }
+  document.getElementById('matchList').innerHTML = html;
+}
+
+function selectGame(gameId) {
+  // gameId may come as number from onclick, ensure consistent type
+  gameId = Number(gameId) || gameId;
+  STATE.selectedGameId = gameId;
+  var game = null;
+  for (var i=0;i<STATE.apiGames.length;i++) { 
+    if(STATE.apiGames[i].id==gameId) {game=STATE.apiGames[i];break;} 
+  }
+  if (!game) return;
+  var tH = findTeamByName(game.home_team_name_en) || getTeam(game.home_team_id);
+  var tA = findTeamByName(game.away_team_name_en) || getTeam(game.away_team_id);
+  var vc = getVenueCountry(game.stadium_id);
+  var result = predict(tH, tA, vc);
+  var isFin = game.time_elapsed==='finished'||game.finished==='TRUE';
+  var isLive = game.time_elapsed!=='notstarted'&&game.time_elapsed!=='finished';
+
+  var html = '';
+  var hp=Math.round(result.homeProb*100), dp=Math.round(result.drawProb*100), ap=Math.round(result.awayProb*100);
+
+  /* ACTUAL RESULT */
+  if (isFin) {
+    var aH=parseInt(game.home_score)||0, aA=parseInt(game.away_score)||0;
+    var actualResult = aH>aA?'主胜':(aH<aA?'客胜':'平局');
+    var predResult = result.homeProb>result.awayProb?(result.homeProb>result.drawProb?'主胜':'平局'):(result.awayProb>result.drawProb?'客胜':'平局');
+    var hitMiss = actualResult===predResult?'hit':'miss';
+    var predScoreProb = (aH<=6&&aA<=6)?(result.matrix[aH][aA]*100).toFixed(1):'0.0';
+    html += '<div class="actual-result">'
+      + '<div class="ar-header">✅ 实际比赛结果（'+stageLabel(game)+'）</div>'
+      + '<div class="ar-score"><span class="hs">'+game.home_score+'</span> : <span class="as">'+game.away_score+'</span></div>';
+    // Scorers: may be plain string or JSON array
+    function parseScorers(raw) {
+      if (!raw || raw === 'null' || raw === '') return '';
+      try { var arr = JSON.parse(raw); if (Array.isArray(arr)) return arr.join(', '); } catch(e) {}
+      return raw; // plain string
+    }
+    var hsText = parseScorers(game.home_scorers);
+    var asText = parseScorers(game.away_scorers);
+    if (hsText) html += '<div class="ar-scorers">⚽ '+tH.name+'：'+hsText+'</div>';
+    if (asText) html += '<div class="ar-scorers">⚽ '+tA.name+'：'+asText+'</div>';
+    html += '<div class="ar-prediction-compare">模型预测：<b>'+predResult+'</b> → 实际：<b>'+actualResult+'</b> <span class="'+hitMiss+'">'+(hitMiss==='hit'?'✅ 命中':'❌ 未中')+'</span><br>比分 '+aH+':'+aA+' 在预测概率中占比 '+predScoreProb+'%</div>'
+      + '</div>';
+  }
+
+  /* LIVE */
+  if (isLive) {
+    html += '<div class="live-result">'
+      + '<div class="lr-header">🔴 比赛进行中</div>'
+      + '<div class="lr-score"><span style="color:var(--cyan)">'+game.home_score+'</span> : <span style="color:var(--orange)">'+game.away_score+'</span></div>'
+      + '<div class="lr-minute">⏱ 第 '+game.time_elapsed+' 分钟</div>'
+      + '</div>';
+  }
+
+  /* PREDICTION BLOCK - wrapped in collapsible for finished games */
+  var predLabel = isFin ? '📊 赛前AI预测（点击展开对比）' : '📊 AI预测';
+  var scoreMatrix = '';
+  var scores = [];
+  for (var i=0;i<=6;i++) for (var j=0;j<=6;j++) scores.push({h:i,a:j,p:result.matrix[i][j]});
+  scores.sort(function(a,b){return b.p-a.p;});
+  var top9 = scores.slice(0,9);
+  scoreMatrix += '<div class="score-matrix"><div class="sm-title">🎯 最可能比分</div><div class="sm-grid">';
+  for (var i=0;i<top9.length;i++) {
+    var s=top9[i], cls='';
+    if (isFin && s.h===parseInt(game.home_score) && s.a===parseInt(game.away_score)) cls=' actual';
+    else if (i===0) cls=' top1'; else if (i<3) cls=' top2';
+    scoreMatrix += '<div class="sm-cell'+cls+'"><div class="sm-score">'+s.h+':'+s.a+'</div><div class="sm-prob">'+(s.p*100).toFixed(1)+'%</div></div>';
+  }
+  scoreMatrix += '</div></div>';
+
+  // Build team data cards with update badges
+  function buildTeamCard(t, side, lambda, vc2) {
+    var u = TEAM_UPDATES[t.id];
+    var nameHtml = '<div class="td-name '+side+'"><img src="'+flagUrl(t)+'">'+t.name
+      + (u ? ' <span class="td-updated-badge">⚡实战更新</span>' : '')
+      + '</div>';
+    var attNote = u && Math.abs(u.attDelta)>=0.5 ? ' <span style="font-size:9px;color:'+(u.attDelta>0?'var(--green)':'var(--red)')+';">'+(u.attDelta>0?'↑':'↓')+Math.abs(u.attDelta).toFixed(1)+'</span>' : '';
+    var defNote = u && Math.abs(u.defDelta)>=0.5 ? ' <span style="font-size:9px;color:'+(u.defDelta>0?'var(--green)':'var(--red)')+';">'+(u.defDelta>0?'↑':'↓')+Math.abs(u.defDelta).toFixed(1)+'</span>' : '';
+    var card = '<div class="td-card">'+nameHtml
+      + '<div class="td-row"><span class="lbl">FIFA积分</span><span class="val">'+t.fifa+'</span></div>'
+      + '<div class="td-row"><span class="lbl">进攻指数</span><span class="val">'+Math.round(t.att)+attNote+'</span></div>'
+      + '<div class="td-row"><span class="lbl">防守指数</span><span class="val">'+Math.round(t.def)+defNote+'</span></div>'
+      + '<div class="td-row"><span class="lbl">预期进球</span><span class="val">'+lambda.toFixed(2)+'</span></div>'
+      + (getHomeAdvantage(t,vc2)>1?'<div class="td-row"><span class="lbl">主场加成</span><span class="val" style="color:var(--green)">+15%（东道主）</span></div>':'')
+      + (u ? '<div class="td-row"><span class="lbl">实战场数</span><span class="val" style="color:var(--cyan)">'+u.games+'场已校准</span></div>' : '')
+      + '</div>';
+    return card;
+  }
+  var teamData = '<div class="team-data">'
+    + buildTeamCard(tH, 'home', result.lambdaH, vc)
+    + buildTeamCard(tA, 'away', result.lambdaA, vc)
+    + '</div>'
+    + '<div class="model-info">'
+    + '<span>λ '+result.lambdaH.toFixed(2)+':'+result.lambdaA.toFixed(2)+'</span>'
+    + '<span>ρ '+result.rho.toFixed(4)+'</span>'
+    + '<span>φ '+result.phi.toFixed(2)+'</span>'
+    + '<span>v5</span>'
+    + '</div>';
+
+  var predContent = '<div class="prediction-section">'
+    + '<div class="pred-header">' + (isFin ? '📊 赛前预测（对比参考）' : '📊 AI预测') + '</div>'
+    + '<div class="wdl-bar"><div class="wdl-home" style="width:'+hp+'%">'+hp+'%</div>'
+    + '<div class="wdl-draw" style="width:'+dp+'%">'+(dp>=8?dp+'%':'')+'</div>'
+    + '<div class="wdl-away" style="width:'+ap+'%">'+ap+'%</div></div>'
+    + '<div class="wdl-labels"><span class="lbl-h">'+hp+'% 主胜</span><span class="lbl-d">'+dp+'% 平局</span><span class="lbl-a">'+ap+'% 客胜</span></div></div>'
+    + scoreMatrix + teamData;
+
+  if (isFin) {
+    // Collapsible wrapper
+    html += '<button class="pred-collapse-btn" id="predCollapseBtn" onclick="togglePredCollapse()">'
+      + '<span>'+predLabel+'</span><span class="arrow">▼</span>'
+      + '</button>'
+      + '<div class="pred-collapsible" id="predCollapsible">' + predContent + '</div>';
+  } else {
+    html += predContent;
+  }
+
+  var panel = document.getElementById('resultPanel');
+  panel.innerHTML = html;
+  panel.classList.add('show');
+  document.getElementById('shareBtnBottom').classList.add('show');
+  renderMatchList();
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+/* STRENGTH UPDATE PANEL (collapsible) */
+function renderStrengthUpdates() {
+  var panel = document.getElementById('strengthPanel');
+  if (!panel) return;
+  var ids = Object.keys(TEAM_UPDATES);
+  if (ids.length === 0) { panel.style.display = 'none'; return; }
+  // Sort by biggest change
+  ids.sort(function(a,b){
+    var ua=TEAM_UPDATES[a], ub=TEAM_UPDATES[b];
+    return (Math.abs(ub.attDelta)+Math.abs(ub.defDelta))-(Math.abs(ua.attDelta)+Math.abs(ua.defDelta));
+  });
+  var html = '<button class="su-toggle-btn" onclick="toggleStrengthPanel()">'
+    + '<span class="su-icon">⚡</span>实战实力更新'
+    + '<span class="su-sub">（'+ids.length+'支球队已校准，点击展开）</span>'
+    + '<span class="su-arrow">▼</span></button>'
+    + '<div class="su-body" id="suBody"><div class="su-list">';
+  for (var i=0;i<ids.length;i++) {
+    var t = TEAMS[ids[i]]; var u = TEAM_UPDATES[ids[i]];
+    if (!t) continue;
+    var attClass = u.attDelta > 0.5 ? 'up' : (u.attDelta < -0.5 ? 'dn' : '');
+    var defClass = u.defDelta > 0.5 ? 'up' : (u.defDelta < -0.5 ? 'dn' : '');
+    html += '<div class="su-row">'
+      + '<img src="'+flagUrl(t)+'" class="su-flag" onerror="this.style.display=\'none\'">'
+      + '<span class="su-name">'+t.name+'</span>'
+      + '<span class="su-games">'+u.games+'场</span>'
+      + (Math.abs(u.attDelta)>=0.5 ? '<span class="su-delta '+attClass+'">进攻'+(u.attDelta>0?'+':'')+u.attDelta.toFixed(1)+'</span>' : '')
+      + (Math.abs(u.defDelta)>=0.5 ? '<span class="su-delta '+defClass+'">防守'+(u.defDelta>0?'+':'')+u.defDelta.toFixed(1)+'</span>' : '')
+      + '</div>';
+  }
+  html += '</div></div>';
+  panel.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function toggleStrengthPanel() {
+  var panel = document.getElementById('strengthPanel');
+  var btn = panel.querySelector('.su-toggle-btn');
+  var body = document.getElementById('suBody');
+  if (!btn || !body) return;
+  var isOpen = body.classList.toggle('open');
+  btn.classList.toggle('open', isOpen);
+  btn.querySelector('.su-sub').textContent = isOpen
+    ? '（'+Object.keys(TEAM_UPDATES).length+'支球队已校准，点击收起）'
+    : '（'+Object.keys(TEAM_UPDATES).length+'支球队已校准，点击展开）';
+}
+
+function togglePredCollapse() {
+  var btn = document.getElementById('predCollapseBtn');
+  var body = document.getElementById('predCollapsible');
+  if (!btn || !body) return;
+  var isOpen = body.classList.toggle('open');
+  btn.classList.toggle('open', isOpen);
+  btn.querySelector('span:first-child').textContent = isOpen ? '📊 赛前AI预测（收起）' : '📊 赛前AI预测（点击展开对比）';
+}
+
+/* SHARE */
+function openShareModal() { document.getElementById('shareModal').classList.add('show'); generateShareImage(); updateShareText(); }
+function closeShareModal() { document.getElementById('shareModal').classList.remove('show'); }
+function updateShareText() {
+  var game=null; for(var i=0;i<STATE.apiGames.length;i++){if(STATE.apiGames[i].id==STATE.selectedGameId){game=STATE.apiGames[i];break;}}
+  if(!game)return;
+  var tH=findTeamByName(game.home_team_name_en)||getTeam(game.home_team_id), tA=findTeamByName(game.away_team_name_en)||getTeam(game.away_team_id);
+  var result=predict(tH,tA,getVenueCountry(game.stadium_id));
+  var hp=Math.round(result.homeProb*100),dp=Math.round(result.drawProb*100),ap=Math.round(result.awayProb*100);
+  var isFin=game.time_elapsed==='finished';
+  var text='⚽ 2026世界杯 AI预测\n\n'+tH.name+' vs '+tA.name;
+  if(isFin) text+='\n✅ 完赛比分：'+game.home_score+':'+game.away_score;
+  text+='\n\n📊 主胜 '+hp+'% | 平局 '+dp+'% | 客胜 '+ap+'%\n🤖 双泊松 + GBDT 集成\n📅 '+new Date().toLocaleDateString('zh-CN')+'\n\n⚠️ 仅供参考';
+  document.getElementById('shareTextArea').textContent = text;
+}
+function generateShareImage() {
+  var canvas=document.getElementById('shareCanvas'), ctx=canvas.getContext('2d');
+  var W=680,H=1080;
+  var bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#020408');bg.addColorStop(0.5,'#060d14');bg.addColorStop(1,'#020408');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(0,212,255,0.04)';ctx.lineWidth=1;
+  for(var y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  for(var x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  var glow=ctx.createRadialGradient(W/2,0,0,W/2,0,400);
+  glow.addColorStop(0,'rgba(0,212,255,0.08)');glow.addColorStop(1,'transparent');
+  ctx.fillStyle=glow;ctx.fillRect(0,0,W,400);
+  ctx.fillStyle='rgba(10,21,32,0.95)';ctx.fillRect(0,0,W,72);
+  ctx.strokeStyle='rgba(0,212,255,0.2)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(0,72);ctx.lineTo(W,72);ctx.stroke();
+  ctx.font='bold 20px Orbitron,sans-serif';ctx.fillStyle='#00d4ff';ctx.textAlign='left';
+  ctx.fillText('WORLD CUP AI',28,36);
+  ctx.font='10px "Space Mono",monospace';ctx.fillStyle='rgba(234,240,245,0.4)';
+  ctx.fillText('Dixon-Coles + NegBin + GBDT v5',28,54);
+  var game=null; for(var i=0;i<STATE.apiGames.length;i++){if(STATE.apiGames[i].id==STATE.selectedGameId){game=STATE.apiGames[i];break;}}
+  if(!game)return;
+  var tH=findTeamByName(game.home_team_name_en)||getTeam(game.home_team_id), tA=findTeamByName(game.away_team_name_en)||getTeam(game.away_team_id);
+  var vc=getVenueCountry(game.stadium_id), result=predict(tH,tA,vc);
+  var hp=Math.round(result.homeProb*100),dp=Math.round(result.drawProb*100),ap=Math.round(result.awayProb*100);
+  var isFin=game.time_elapsed==='finished'||game.finished==='TRUE';
+  ctx.textAlign='left';ctx.font='bold 22px "Noto Sans SC",sans-serif';ctx.fillStyle='#eaf0f5';
+  ctx.fillText(tH.name,28,120);
+  ctx.textAlign='center';ctx.font='bold 18px Orbitron,sans-serif';ctx.fillStyle='rgba(234,240,245,0.3)';
+  ctx.fillText('VS',W/2,120);
+  ctx.textAlign='right';ctx.font='bold 22px "Noto Sans SC",sans-serif';ctx.fillStyle='#eaf0f5';
+  ctx.fillText(tA.name,W-28,120);
+  if(isFin){ctx.textAlign='center';ctx.font='bold 14px "Noto Sans SC",sans-serif';ctx.fillStyle='#00ff9d';ctx.fillText('✅ 实际比分',W/2,150);ctx.font='bold 36px Orbitron,sans-serif';ctx.fillStyle='#00ff9d';ctx.fillText(game.home_score+' : '+game.away_score,W/2,190);}
+  var bjTime=formatBJTime(game.local_date,game.stadium_id);
+  var barTop=isFin?210:148;
+  ctx.textAlign='center';ctx.font='11px "Space Mono",monospace';ctx.fillStyle='rgba(234,240,245,0.5)';
+  ctx.fillText(bjTime+' Beijing Time',W/2,barTop);
+  var barY=barTop+24,barH=36,barX=28,barW=W-56;
+  var hpW=barW*hp/100,dpW=barW*dp/100;
+  var homeGrad=ctx.createLinearGradient(barX,0,barX+hpW,0);homeGrad.addColorStop(0,'#0068cc');homeGrad.addColorStop(1,'#00d4ff');
+  ctx.fillStyle=homeGrad;roundRect(ctx,barX,barY,hpW,barH,10);ctx.fill();
+  ctx.font='bold 13px Orbitron,sans-serif';ctx.fillStyle='#fff';ctx.textAlign='center';
+  ctx.fillText(hp+'%',barX+hpW/2,barY+23);
+  ctx.fillStyle='rgba(255,255,255,0.1)';roundRect(ctx,barX+hpW,barY,dpW,barH,0);ctx.fill();
+  if(dp>=8){ctx.font='bold 12px Orbitron,sans-serif';ctx.fillStyle='rgba(234,240,245,0.5)';ctx.fillText(dp+'%',barX+hpW+dpW/2,barY+23);}
+  var awayGrad=ctx.createLinearGradient(barX+hpW+dpW,0,barX+hpW+dpW+(barW-hpW-dpW),0);awayGrad.addColorStop(0,'#ff8c42');awayGrad.addColorStop(1,'#ff5722');
+  ctx.fillStyle=awayGrad;roundRect(ctx,barX+hpW+dpW,barY,barW-hpW-dpW,barH,10);ctx.fill();
+  ctx.font='bold 13px Orbitron,sans-serif';ctx.fillStyle='#fff';ctx.textAlign='center';
+  ctx.fillText(ap+'%',barX+hpW+dpW+(barW-hpW-dpW)/2,barY+23);
+  ctx.font='11px "Noto Sans SC",sans-serif';ctx.textAlign='left';ctx.fillStyle='#00d4ff';
+  ctx.fillText(hp+'% 主胜',barX,barY+barH+20);ctx.textAlign='center';ctx.fillStyle='rgba(234,240,245,0.5)';
+  ctx.fillText(dp+'% 平局',W/2,barY+barH+20);ctx.textAlign='right';ctx.fillStyle='#ff8c42';
+  ctx.fillText(ap+'% 客胜',W-barX,barY+barH+20);
+  var scores=[],sy=barY+barH+44;
+  for(var i=0;i<=6;i++)for(var j=0;j<=6;j++)scores.push({h:i,a:j,p:result.matrix[i][j]});
+  scores.sort(function(a,b){return b.p-a.p;});
+  ctx.font='bold 12px "Noto Sans SC",sans-serif';ctx.fillStyle='#eaf0f5';ctx.textAlign='left';
+  ctx.fillText('🎯 最可能比分',28,sy);sy+=14;
+  for(var idx=0;idx<6;idx++){var s=scores[idx],cx=28+(idx%3)*((W-72)/3+8),cy=sy+Math.floor(idx/3)*56;
+    ctx.fillStyle=idx===0?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)';
+    ctx.strokeStyle=idx===0?'rgba(0,212,255,0.35)':'rgba(255,255,255,0.08)';
+    roundRect(ctx,cx,cy,(W-72)/3,48,10);ctx.fill();ctx.stroke();
+    ctx.font='bold 18px Orbitron,sans-serif';ctx.fillStyle=idx===0?'#00d4ff':'#eaf0f5';ctx.textAlign='center';
+    ctx.fillText(s.h+':'+s.a,cx+(W-72)/3/2,cy+22);
+    ctx.font='10px "Space Mono",monospace';ctx.fillStyle=idx===0?'#00ff9d':'rgba(234,240,245,0.5)';
+    ctx.fillText((s.p*100).toFixed(1)+'%',cx+(W-72)/3/2,cy+40);
+  }
+  var qrY=H-180;
+  try{var qr=qrcode(0,'M');qr.addData(window.location.href);qr.make();var qrSize=120,qrX=28,cellS=qrSize/qr.getModuleCount();
+    for(var r=0;r<qr.getModuleCount();r++){for(var c=0;c<qr.getModuleCount();c++){ctx.fillStyle=qr.isDark(r,c)?'#00d4ff':'transparent';roundRect(ctx,qrX+c*cellS,qrY+r*cellS,cellS*0.85,cellS*0.85,cellS*0.2);ctx.fill();}}
+  }catch(e){}
+  ctx.textAlign='left';ctx.font='11px "Noto Sans SC",sans-serif';ctx.fillStyle='rgba(234,240,245,0.6)';
+  ctx.fillText('扫码查看实时预测',160,qrY+40);
+  ctx.font='9px "Space Mono",monospace';ctx.fillStyle='rgba(234,240,245,0.3)';
+  ctx.fillText(tH.name+' vs '+tA.name,160,qrY+58);
+  ctx.fillText(hp+'% / '+dp+'% / '+ap+'%',160,qrY+74);
+  ctx.fillStyle='rgba(10,21,32,0.9)';ctx.fillRect(0,H-50,W,50);
+  ctx.font='9px "Noto Sans SC",sans-serif';ctx.fillStyle='rgba(255,64,104,0.5)';ctx.textAlign='center';
+  ctx.fillText('⚠️ 仅供参考，不构成任何投注建议',W/2,H-20);
+  ctx.font='10px "Space Mono",monospace';ctx.fillStyle='rgba(234,240,245,0.3)';
+  ctx.fillText(new Date().toLocaleString('zh-CN'),W/2,H-36);
+}
+function roundRect(ctx,x,y,w,h,r){r=Math.min(r,Math.min(w,h)/2);ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();}
+function saveShareImage(){var canvas=document.getElementById('shareCanvas');try{canvas.toBlob(function(blob){var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download='wc2026-predict.png';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(url);},100);showToast('✅ 图片已保存');},'image/png');}catch(e){showToast('⚠️ 请长按图片手动保存');}}
+function copyShareText(){var text=document.getElementById('shareTextArea').textContent;if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){showToast('✅ 文案已复制');}).catch(function(){fallbackCopy(text);});}else{fallbackCopy(text);}}
+function fallbackCopy(text){var ta=document.createElement('textarea');ta.value=text;ta.style.cssText='position:fixed;left:-9999px;top:-9999px';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');showToast('✅ 文案已复制');}catch(e){showToast('⚠️ 请手动复制');}document.body.removeChild(ta);}
+function showToast(msg){var t=document.getElementById('smToast');t.textContent=msg;t.style.display='block';setTimeout(function(){t.style.display='none';},3000);}
+document.getElementById('shareModal').addEventListener('click',function(e){if(e.target===e.currentTarget)closeShareModal();});
+
+/* WECHAT DETECTION */
+function detectWechat(){var ua=navigator.userAgent.toLowerCase();var isWx=ua.indexOf('micromessenger')!==-1;var tip=document.getElementById('wxTip');if(isWx&&tip)setTimeout(function(){tip.classList.add('show');},1500);return isWx;}
+function closeWxTip(){var tip=document.getElementById('wxTip');if(tip){tip.classList.remove('show');try{localStorage.setItem('wx_tip_closed','1');}catch(e){}}}
+/* AUTO REFRESH every 5 min during match hours (Beijing 0:00-12:00) */
+function autoRefresh(){fetchAPIData();}
+setInterval(autoRefresh,5*60*1000);
+
+/* INIT */
+detectWechat();
+fetchAPIData();
+</script>
+</body>
+</html>
