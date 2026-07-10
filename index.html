@@ -813,23 +813,16 @@ function fetchAPIData() {
       buildDateTabs();
       renderStrengthUpdates();
       var today = getTodayDateKey();
-      if (!STATE.selectedDate) {
-        // 默认：今天(若有比赛) > 最新已完赛日 > 最新比赛日
-        var pick = today;
-        var lastFinDate = null, lastFinNum = -1;
-        for (var i=0;i<STATE.apiGames.length;i++) {
-          var g = STATE.apiGames[i]; if (!g.local_date) continue;
-          if (g.finished==='TRUE' || g.time_elapsed==='finished') {
-            var dk = getDateKeyBJ(g.local_date, g.stadium_id);
-            var mm = dk.indexOf('月'), dd = dk.indexOf('日');
-            var num = parseInt(dk.slice(0,mm))*100 + parseInt(dk.slice(mm+1,dd));
-            if (num > lastFinNum) { lastFinNum = num; lastFinDate = dk; }
-          }
+      if (!STATE.selectedDate && STATE.dateList && STATE.dateList.length) {
+        // 默认：最早的“未来”比赛日(明天及以后) > 今天 > 最近完赛日
+        var todayNum = dateKeyToNum(today);
+        var pick = null, ul = STATE.dateList;
+        for (var k=0;k<ul.length && dateKeyToNum(ul[k])>=todayNum;k++) {
+          if (dateKeyToNum(ul[k]) > todayNum) { pick = ul[k]; break; }
         }
-        if (STATE.dateList && STATE.dateList.indexOf(today) >= 0) pick = today;
-        else if (lastFinDate) pick = lastFinDate;
-        else if (STATE.dateList && STATE.dateList.length) pick = STATE.dateList[STATE.dateList.length-1];
-        selectDate(pick);
+        if (!pick && ul.indexOf(today) >= 0) pick = today;
+        if (!pick) { for (var k=0;k<ul.length;k++){ if (dateKeyToNum(ul[k]) <= todayNum){ pick = ul[k]; break; } } }
+        selectDate(pick || ul[0]);
       } else renderMatchList();
     }
   }
@@ -846,6 +839,11 @@ function fetchAPIData() {
 
 function getTodayDateKey() {
   var n = new Date(); return (n.getMonth()+1) + '月' + n.getDate() + '日';
+}
+function dateKeyToNum(dk) {
+  if (!dk) return 0;
+  var mm = dk.indexOf('月'), dd = dk.indexOf('日');
+  return parseInt(dk.slice(0,mm))*100 + parseInt(dk.slice(mm+1,dd));
 }
 
 /* Time conversion: stadium local -> Beijing (+12~+15h) */
@@ -913,7 +911,17 @@ function buildDateTabs() {
     var dk = getDateKeyBJ(g.local_date, g.stadium_id);
     dateSet[dk] = true;
   }
-  var dates = Object.keys(dateSet).sort(function(a,b){ return parseInt(a)-parseInt(b); });
+  var all = Object.keys(dateSet);
+  var todayNum = dateKeyToNum(getTodayDateKey());
+  var upcoming = [], past = [];
+  for (var j=0;j<all.length;j++) {
+    if (dateKeyToNum(all[j]) >= todayNum) upcoming.push(all[j]);
+    else past.push(all[j]);
+  }
+  // 未开赛/今天排前面（左），已结束排后面（右，且最近完赛在最靠近分界处）
+  upcoming.sort(function(a,b){ return dateKeyToNum(a)-dateKeyToNum(b); });
+  past.sort(function(a,b){ return dateKeyToNum(b)-dateKeyToNum(a); });
+  var dates = upcoming.concat(past);
   STATE.dateList = dates;
   var html = '';
   for (var i=0;i<dates.length;i++) {
@@ -928,7 +936,10 @@ function selectDate(dateKey) {
   document.getElementById('resultPanel').classList.remove('show');
   document.getElementById('shareBtnBottom').classList.remove('show');
   var tabs = document.querySelectorAll('.date-tab');
-  for (var i=0;i<tabs.length;i++) { tabs[i].className = 'date-tab' + (tabs[i].textContent===dateKey?' active':''); }
+  for (var i=0;i<tabs.length;i++) {
+    tabs[i].className = 'date-tab' + (tabs[i].textContent===dateKey?' active':'');
+    if (tabs[i].textContent===dateKey) tabs[i].scrollIntoView({inline:'nearest', block:'nearest'});
+  }
   renderMatchList();
 }
 
